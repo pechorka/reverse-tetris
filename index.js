@@ -163,6 +163,96 @@ function cellKey(x, y) {
   return `${x},${y}`;
 }
 
+function defaultCellMargins() {
+  return {
+    left: CELL_MARGIN,
+    right: CELL_MARGIN,
+    top: CELL_MARGIN,
+    bottom: CELL_MARGIN,
+  };
+}
+
+function computeGridCellMargins(x, y) {
+  const cell = grid[idx(x, y)];
+  if (!cell || isEmptyCell(cell) || cell.blockId === null) {
+    return defaultCellMargins();
+  }
+  const isSameBlockNeighbor = (neighborX, neighborY) => {
+    if (neighborX < 0 || neighborX >= WIDTH || neighborY < 0 || neighborY >= HEIGHT) {
+      return false;
+    }
+    const neighbor = grid[idx(neighborX, neighborY)];
+    if (!neighbor || isEmptyCell(neighbor) || neighbor.blockId === null) return false;
+    return neighbor.blockId === cell.blockId;
+  };
+  return {
+    left: isSameBlockNeighbor(x - 1, y) ? 0 : CELL_MARGIN,
+    right: isSameBlockNeighbor(x + 1, y) ? 0 : CELL_MARGIN,
+    top: isSameBlockNeighbor(x, y - 1) ? 0 : CELL_MARGIN,
+    bottom: isSameBlockNeighbor(x, y + 1) ? 0 : CELL_MARGIN,
+  };
+}
+
+function computeDrawRect(cellX, cellY, margins) {
+  const width = Math.max(0, CELL_SIZE - margins.left - margins.right);
+  const height = Math.max(0, CELL_SIZE - margins.top - margins.bottom);
+  return {
+    x: cellX * CELL_SIZE + margins.left,
+    y: cellY * CELL_SIZE + margins.top,
+    width,
+    height,
+  };
+}
+
+function strokeRectWithMargins(context, rect, margins) {
+  if (!rect || rect.width <= 0 || rect.height <= 0) return;
+  let hasSegments = false;
+  context.beginPath();
+  if (margins.top > 0) {
+    context.moveTo(rect.x, rect.y);
+    context.lineTo(rect.x + rect.width, rect.y);
+    hasSegments = true;
+  }
+  if (margins.right > 0) {
+    context.moveTo(rect.x + rect.width, rect.y);
+    context.lineTo(rect.x + rect.width, rect.y + rect.height);
+    hasSegments = true;
+  }
+  if (margins.bottom > 0) {
+    context.moveTo(rect.x + rect.width, rect.y + rect.height);
+    context.lineTo(rect.x, rect.y + rect.height);
+    hasSegments = true;
+  }
+  if (margins.left > 0) {
+    context.moveTo(rect.x, rect.y + rect.height);
+    context.lineTo(rect.x, rect.y);
+    hasSegments = true;
+  }
+  if (hasSegments) context.stroke();
+}
+
+function cellSetFromCells(cells, offset = { x: 0, y: 0 }) {
+  const set = new Set();
+  if (!cells) return set;
+  const offsetX = offset?.x ?? 0;
+  const offsetY = offset?.y ?? 0;
+  for (const cell of cells) {
+    set.add(cellKey(cell.x + offsetX, cell.y + offsetY));
+  }
+  return set;
+}
+
+function computeMarginsForCellInSet(cell, cellSet) {
+  if (!cellSet || cellSet.size === 0) return defaultCellMargins();
+  const hasNeighbor = (dx, dy) => cellSet.has(cellKey(cell.x + dx, cell.y + dy));
+  return {
+    left: hasNeighbor(-1, 0) ? 0 : CELL_MARGIN,
+    right: hasNeighbor(1, 0) ? 0 : CELL_MARGIN,
+    top: hasNeighbor(0, -1) ? 0 : CELL_MARGIN,
+    bottom: hasNeighbor(0, 1) ? 0 : CELL_MARGIN,
+  };
+}
+
 function collectBlockCells(startX, startY, blockId) {
   if (blockId === null || blockId === undefined) return [];
   const toVisit = [{ x: startX, y: startY }];
@@ -531,48 +621,58 @@ function render(timestamp = performance.now()) {
           .filter((blockId) => blockId !== null && blockId !== undefined)
       )
     : null;
-  const innerSize = Math.max(0, CELL_SIZE - CELL_MARGIN * 2);
   for (let y = 0; y < HEIGHT; y++) {
     for (let x = 0; x < WIDTH; x++) {
       const cell = grid[idx(x, y)];
-      const drawX = x * CELL_SIZE + CELL_MARGIN;
-      const drawY = y * CELL_SIZE + CELL_MARGIN;
+      const margins = computeGridCellMargins(x, y);
+      const rect = computeDrawRect(x, y, margins);
       const isAnimatingCell =
         animatingBlockIds && cell.blockId !== null && animatingBlockIds.has(cell.blockId);
       if (!isAnimatingCell) {
         ctx.fillStyle = cell.color;
-        if (innerSize > 0) ctx.fillRect(drawX, drawY, innerSize, innerSize);
-      } else if (innerSize > 0) {
+        if (rect.width > 0 && rect.height > 0) {
+          ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+        }
+      } else if (rect.width > 0 && rect.height > 0) {
         ctx.fillStyle = COLOR_BACKGROUND;
-        ctx.fillRect(drawX, drawY, innerSize, innerSize);
+        ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
       }
       const key = cellKey(x, y);
       const baseBorder = isEmptyCell(cell)
         ? BORDER_DEFAULT
         : borderColorForLength(blockLengths.get(cell.blockId));
       const strokeColor = hoveredCells.has(key) ? BORDER_HOVER : baseBorder;
-      if (innerSize > 0 && !isAnimatingCell) {
+      if (rect.width > 0 && rect.height > 0 && !isAnimatingCell) {
         ctx.save();
         ctx.strokeStyle = strokeColor;
         ctx.lineWidth = 2;
-        ctx.strokeRect(drawX, drawY, innerSize, innerSize);
+        strokeRectWithMargins(ctx, rect, margins);
         ctx.restore();
       }
-      ctx.strokeStyle = BORDER_DEFAULT;
-      ctx.strokeRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+      if (isEmptyCell(cell)) {
+        ctx.strokeStyle = BORDER_DEFAULT;
+        ctx.strokeRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+      }
     }
   }
   if (selectedBlock) {
     const ghostDropDistance = computeDropDistance(selectedBlock.cells);
     const length = selectedBlock.baseCells.length;
     const ghostBorderColor = borderColorForLength(length);
+    const ghostCells = selectedBlock.cells.map((cell) => ({
+      x: cell.x,
+      y: cell.y + ghostDropDistance,
+    }));
+    const ghostCellSet = cellSetFromCells(ghostCells);
     ctx.save();
     ctx.globalAlpha = GHOST_FILL_ALPHA;
     ctx.fillStyle = selectedBlock.color;
-    for (const cell of selectedBlock.cells) {
-      const drawX = cell.x * CELL_SIZE + CELL_MARGIN;
-      const drawY = (cell.y + ghostDropDistance) * CELL_SIZE + CELL_MARGIN;
-      if (innerSize > 0) ctx.fillRect(drawX, drawY, innerSize, innerSize);
+    for (const cell of ghostCells) {
+      const margins = computeMarginsForCellInSet(cell, ghostCellSet);
+      const rect = computeDrawRect(cell.x, cell.y, margins);
+      if (rect.width > 0 && rect.height > 0) {
+        ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+      }
     }
     ctx.restore();
     ctx.save();
@@ -580,23 +680,24 @@ function render(timestamp = performance.now()) {
     ctx.strokeStyle = ghostBorderColor;
     ctx.setLineDash([6, 4]);
     ctx.lineWidth = 2;
-    for (const cell of selectedBlock.cells) {
-      const drawX = cell.x * CELL_SIZE + CELL_MARGIN;
-      const drawY = (cell.y + ghostDropDistance) * CELL_SIZE + CELL_MARGIN;
-      if (innerSize > 0) ctx.strokeRect(drawX, drawY, innerSize, innerSize);
+    for (const cell of ghostCells) {
+      const margins = computeMarginsForCellInSet(cell, ghostCellSet);
+      const rect = computeDrawRect(cell.x, cell.y, margins);
+      strokeRectWithMargins(ctx, rect, margins);
     }
     ctx.restore();
-  }
-  if (selectedBlock) {
+    const selectedCellSet = cellSetFromCells(selectedBlock.cells);
     for (const cell of selectedBlock.cells) {
-      const drawX = cell.x * CELL_SIZE + CELL_MARGIN;
-      const drawY = cell.y * CELL_SIZE + CELL_MARGIN;
+      const margins = computeMarginsForCellInSet(cell, selectedCellSet);
+      const rect = computeDrawRect(cell.x, cell.y, margins);
       ctx.fillStyle = selectedBlock.color;
-      if (innerSize > 0) ctx.fillRect(drawX, drawY, innerSize, innerSize);
+      if (rect.width > 0 && rect.height > 0) {
+        ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+      }
       ctx.save();
       ctx.strokeStyle = BORDER_SELECTED;
       ctx.lineWidth = 2;
-      if (innerSize > 0) ctx.strokeRect(drawX, drawY, innerSize, innerSize);
+      strokeRectWithMargins(ctx, rect, margins);
       ctx.restore();
     }
   }
@@ -607,32 +708,48 @@ function render(timestamp = performance.now()) {
     if (!cell || isEmptyCell(cell) || cell.blockId === null) continue;
     previewLengths.set(cell.blockId, (previewLengths.get(cell.blockId) || 0) + 1);
   }
+  const previewBlockCells = new Map();
+  for (let x = 0; x < WIDTH; x++) {
+    const cell = nextRow[x];
+    if (!cell || isEmptyCell(cell) || cell.blockId === null) continue;
+    if (!previewBlockCells.has(cell.blockId)) {
+      previewBlockCells.set(cell.blockId, []);
+    }
+    previewBlockCells.get(cell.blockId).push({ x, y: HEIGHT });
+  }
+  const previewCellSets = new Map();
+  for (const [blockId, cells] of previewBlockCells) {
+    previewCellSets.set(blockId, cellSetFromCells(cells));
+  }
   ctx.save();
   for (let x = 0; x < WIDTH; x++) {
     const cell = nextRow[x] ?? makeCell(COLOR_BACKGROUND);
-    const drawX = x * CELL_SIZE + CELL_MARGIN;
-    const drawY = previewY + CELL_MARGIN;
-    if (isEmptyCell(cell)) {
-      ctx.fillStyle = COLOR_BACKGROUND;
-      ctx.globalAlpha = 1;
-    } else {
-      ctx.fillStyle = cell.color;
-      ctx.globalAlpha = 0.45;
+    const isBlockCell = !isEmptyCell(cell) && cell.blockId !== null;
+    const previewPosition = { x, y: HEIGHT };
+    const margins = isBlockCell
+      ? computeMarginsForCellInSet(previewPosition, previewCellSets.get(cell.blockId))
+      : defaultCellMargins();
+    const rect = computeDrawRect(previewPosition.x, previewPosition.y, margins);
+    ctx.fillStyle = isBlockCell ? cell.color : COLOR_BACKGROUND;
+    ctx.globalAlpha = isBlockCell ? 0.45 : 1;
+    if (rect.width > 0 && rect.height > 0) {
+      ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
     }
-    if (innerSize > 0) ctx.fillRect(drawX, drawY, innerSize, innerSize);
     ctx.globalAlpha = 1;
     const borderColor = isEmptyCell(cell)
       ? BORDER_DEFAULT
       : borderColorForLength(previewLengths.get(cell.blockId));
-    if (!isEmptyCell(cell) && innerSize > 0) {
+    if (isBlockCell && rect.width > 0 && rect.height > 0) {
       ctx.save();
       ctx.strokeStyle = borderColor;
       ctx.lineWidth = 2;
-      ctx.strokeRect(drawX, drawY, innerSize, innerSize);
+      strokeRectWithMargins(ctx, rect, margins);
       ctx.restore();
     }
-    ctx.strokeStyle = BORDER_DEFAULT;
-    ctx.strokeRect(x * CELL_SIZE, previewY, CELL_SIZE, CELL_SIZE);
+    if (!isBlockCell) {
+      ctx.strokeStyle = BORDER_DEFAULT;
+      ctx.strokeRect(x * CELL_SIZE, previewY, CELL_SIZE, CELL_SIZE);
+    }
   }
   ctx.restore();
   ctx.save();
@@ -656,12 +773,15 @@ function render(timestamp = performance.now()) {
         : anim.strokeStyle;
       ctx.fillStyle = move.color;
       ctx.strokeStyle = strokeColor;
+      const moveCellSet = cellSetFromCells(move.cells);
       for (const cell of move.cells) {
         const currentY = cell.y + progress * move.dropDistance;
-        const drawX = cell.x * CELL_SIZE + CELL_MARGIN;
-        const drawY = currentY * CELL_SIZE + CELL_MARGIN;
-        if (innerSize > 0) ctx.fillRect(drawX, drawY, innerSize, innerSize);
-        if (innerSize > 0) ctx.strokeRect(drawX, drawY, innerSize, innerSize);
+        const margins = computeMarginsForCellInSet(cell, moveCellSet);
+        const rect = computeDrawRect(cell.x, currentY, margins);
+        if (rect.width > 0 && rect.height > 0) {
+          ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+          strokeRectWithMargins(ctx, rect, margins);
+        }
       }
     }
     ctx.restore();
