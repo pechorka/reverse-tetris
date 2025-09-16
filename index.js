@@ -25,6 +25,7 @@ const BORDER_COLORS_BY_LENGTH = {
 };
 const FALL_ANIMATION_PER_ROW = 120; // ms per row drop
 const MIN_FALL_DURATION = 120;
+const LINE_CLEAR_DURATION = 200;
 game.width = WIDTH * CELL_SIZE; 
 game.height = (HEIGHT + PREVIEW_ROWS) * CELL_SIZE;
 
@@ -56,6 +57,7 @@ let hoveredBlock = null;
 let score = 0;
 let nextRow = null;
 let fallingAnimation = null;
+let lineClearAnimation = null;
 let blockCounter = 0;
 
 function nextBlockId() {
@@ -294,7 +296,7 @@ function getPointerPosition(evt) {
 }
 
 function trySelectBlock(evt) {
-  if (selectedBlock || fallingAnimation) return;
+  if (selectedBlock || fallingAnimation || lineClearAnimation) return;
   if (evt.button !== 0) return;
   const pointer = getPointerPosition(evt);
   const cellX = Math.floor(pointer.x / CELL_SIZE);
@@ -364,7 +366,7 @@ function handleDrag(evt) {
 }
 
 function updateHoveredBlock(evt) {
-  if (fallingAnimation) {
+  if (fallingAnimation || lineClearAnimation) {
     hoveredBlock = null;
     return;
   }
@@ -392,7 +394,7 @@ function clearHover() {
 
 function applyGravity(options = {}) {
   const { collectMoves = false } = options;
-  if (selectedBlock || fallingAnimation) {
+  if (selectedBlock || fallingAnimation || lineClearAnimation) {
     return { moved: false, moves: [] };
   }
   const moves = collectMoves ? [] : null;
@@ -449,8 +451,8 @@ function applyGravity(options = {}) {
   return { moved: movedAny, moves: moves || [] };
 }
 
-function clearFullLines() {
-  let cleared = 0;
+function collectFullLines() {
+  const rows = [];
   for (let y = 0; y < HEIGHT; y++) {
     let isFull = true;
     for (let x = 0; x < WIDTH; x++) {
@@ -459,14 +461,18 @@ function clearFullLines() {
         break;
       }
     }
-    if (!isFull) continue;
+    if (isFull) rows.push(y);
+  }
+  return rows;
+}
+
+function clearLines(rows) {
+  if (!rows || rows.length === 0) return;
+  for (const y of rows) {
     for (let x = 0; x < WIDTH; x++) {
       grid[idx(x, y)] = makeCell(COLOR_BACKGROUND);
     }
-    cleared++;
   }
-  if (cleared > 0) hoveredBlock = null;
-  return cleared;
 }
 
 function settleBoard(options = {}) {
@@ -475,9 +481,11 @@ function settleBoard(options = {}) {
     let totalCleared = 0;
     while (true) {
       applyGravity();
-      const cleared = clearFullLines();
-      if (!cleared) break;
-      totalCleared += cleared;
+      const rows = collectFullLines();
+      if (rows.length === 0) break;
+      hoveredBlock = null;
+      clearLines(rows);
+      totalCleared += rows.length;
     }
     if (totalCleared) score += totalCleared;
     if (onComplete) onComplete();
@@ -487,6 +495,13 @@ function settleBoard(options = {}) {
   if (fallingAnimation) {
     const continuation = () => settleBoard({ animate: true, onComplete });
     fallingAnimation.after.push(continuation);
+    return 0;
+  }
+
+  if (lineClearAnimation) {
+    const continuation = () => settleBoard({ animate: true, onComplete });
+    if (!lineClearAnimation.after) lineClearAnimation.after = [];
+    lineClearAnimation.after.push(continuation);
     return 0;
   }
 
@@ -500,10 +515,15 @@ function settleBoard(options = {}) {
     return 0;
   }
 
-  const cleared = clearFullLines();
-  if (cleared > 0) {
-    score += cleared;
-    return settleBoard({ animate: true, onComplete });
+  const rows = collectFullLines();
+  if (rows.length > 0) {
+    hoveredBlock = null;
+    score += rows.length;
+    startLineClearAnimation(rows, {
+      finalize: () => clearLines(rows),
+      after: () => settleBoard({ animate: true, onComplete }),
+    });
+    return 0;
   }
 
   if (onComplete) onComplete();
@@ -520,6 +540,22 @@ function finalizePlacement(cells, color, blockId, dropDistance, shouldSpawn) {
       if (shouldSpawn) spawnBlocks();
     },
   });
+}
+
+function startLineClearAnimation(rows, options = {}) {
+  if (!rows || rows.length === 0) return;
+  lineClearAnimation = {
+    rows: [...rows],
+    rowSet: new Set(rows),
+    duration: options.duration ?? LINE_CLEAR_DURATION,
+    finalize: options.finalize || null,
+    after: Array.isArray(options.after)
+      ? options.after.slice()
+      : options.after
+      ? [options.after]
+      : [],
+    startTime: null,
+  };
 }
 
 function startFallAnimation(moves, options = {}) {
@@ -606,6 +642,22 @@ function render(timestamp = performance.now()) {
   const hoveredCells = new Set(
     hoveredBlock ? hoveredBlock.cells.map((cell) => cellKey(cell.x, cell.y)) : []
   );
+  const activeLineClearAnimation = lineClearAnimation;
+  let lineClearProgress = 0;
+  let clearingRowSet = null;
+  if (activeLineClearAnimation) {
+    if (activeLineClearAnimation.startTime === null) {
+      activeLineClearAnimation.startTime = timestamp;
+    }
+    const duration = activeLineClearAnimation.duration || LINE_CLEAR_DURATION;
+    const elapsed = timestamp - activeLineClearAnimation.startTime;
+    lineClearProgress = duration ? Math.min(1, elapsed / duration) : 1;
+    clearingRowSet = activeLineClearAnimation.rowSet;
+    if (!clearingRowSet) {
+      clearingRowSet = new Set(activeLineClearAnimation.rows);
+      activeLineClearAnimation.rowSet = clearingRowSet;
+    }
+  }
   const blockLengths = new Map();
   for (let y = 0; y < HEIGHT; y++) {
     for (let x = 0; x < WIDTH; x++) {
@@ -622,6 +674,8 @@ function render(timestamp = performance.now()) {
       )
     : null;
   for (let y = 0; y < HEIGHT; y++) {
+    const isClearingRow = clearingRowSet ? clearingRowSet.has(y) : false;
+    const cellAlpha = isClearingRow ? Math.max(0, 1 - lineClearProgress) : 1;
     for (let x = 0; x < WIDTH; x++) {
       const cell = grid[idx(x, y)];
       const margins = computeGridCellMargins(x, y);
@@ -629,9 +683,17 @@ function render(timestamp = performance.now()) {
       const isAnimatingCell =
         animatingBlockIds && cell.blockId !== null && animatingBlockIds.has(cell.blockId);
       if (!isAnimatingCell) {
-        ctx.fillStyle = cell.color;
         if (rect.width > 0 && rect.height > 0) {
-          ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+          if (cellAlpha < 1) {
+            ctx.save();
+            ctx.globalAlpha = cellAlpha;
+            ctx.fillStyle = cell.color;
+            ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+            ctx.restore();
+          } else {
+            ctx.fillStyle = cell.color;
+            ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+          }
         }
       } else if (rect.width > 0 && rect.height > 0) {
         ctx.fillStyle = COLOR_BACKGROUND;
@@ -644,6 +706,7 @@ function render(timestamp = performance.now()) {
       const strokeColor = hoveredCells.has(key) ? BORDER_HOVER : baseBorder;
       if (rect.width > 0 && rect.height > 0 && !isAnimatingCell) {
         ctx.save();
+        if (cellAlpha < 1) ctx.globalAlpha = cellAlpha;
         ctx.strokeStyle = strokeColor;
         ctx.lineWidth = 2;
         strokeRectWithMargins(ctx, rect, margins);
@@ -802,6 +865,15 @@ function render(timestamp = performance.now()) {
   ctx.textBaseline = "top";
   ctx.fillText(`Score: ${score}`, game.width - 10, 10);
   ctx.restore();
+  if (activeLineClearAnimation && lineClearProgress >= 1) {
+    const completedAnimation = activeLineClearAnimation;
+    lineClearAnimation = null;
+    if (typeof completedAnimation.finalize === "function") {
+      completedAnimation.finalize(completedAnimation.rows);
+    }
+    const callbacks = completedAnimation.after ? completedAnimation.after.slice() : [];
+    for (const cb of callbacks) cb();
+  }
   requestAnimationFrame(render);
 }
 
