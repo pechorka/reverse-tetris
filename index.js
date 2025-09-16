@@ -52,7 +52,6 @@ let selectedBlock = null;
 let hoveredBlock = null;
 let score = 0;
 let nextRow = null;
-let selectionMoved = false;
 let fallingAnimation = null;
 let blockCounter = 0;
 
@@ -229,7 +228,6 @@ function trySelectBlock(evt) {
   };
 
   hoveredBlock = null;
-  selectionMoved = false;
   evt.preventDefault();
 }
 
@@ -261,7 +259,6 @@ function applyOffset(offset) {
     x: cell.x + selectedBlock.offset,
     y: cell.y,
   }));
-  selectionMoved = true;
 }
 
 function handleDrag(evt) {
@@ -430,7 +427,6 @@ function finalizePlacement(cells, color, blockId, dropDistance, shouldSpawn) {
       if (shouldSpawn) spawnBlocks();
     },
   });
-  selectionMoved = false;
 }
 
 function startFallAnimation(moves, options = {}) {
@@ -457,15 +453,16 @@ function startFallAnimation(moves, options = {}) {
 
 function dropSelectedBlock() {
   if (!selectedBlock) return null;
-  const { cells, color, blockId } = selectedBlock;
+  const { cells, color, blockId, offset } = selectedBlock;
   const dropDistance = computeDropDistance(cells);
+  const movedHorizontally = offset !== 0;
 
   const placement = {
     cells: cells.map((cell) => ({ ...cell })),
     color,
     blockId,
     dropDistance,
-    shouldSpawn: selectionMoved,
+    shouldSpawn: movedHorizontally,
   };
 
   selectedBlock = null;
