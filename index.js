@@ -708,20 +708,26 @@ function render(timestamp = performance.now()) {
     if (!cell || isEmptyCell(cell) || cell.blockId === null) continue;
     previewLengths.set(cell.blockId, (previewLengths.get(cell.blockId) || 0) + 1);
   }
-  const previewCells = [];
+  const previewBlockCells = new Map();
   for (let x = 0; x < WIDTH; x++) {
     const cell = nextRow[x];
     if (!cell || isEmptyCell(cell) || cell.blockId === null) continue;
-    previewCells.push({ x, y: HEIGHT });
+    if (!previewBlockCells.has(cell.blockId)) {
+      previewBlockCells.set(cell.blockId, []);
+    }
+    previewBlockCells.get(cell.blockId).push({ x, y: HEIGHT });
   }
-  const previewCellSet = cellSetFromCells(previewCells);
+  const previewCellSets = new Map();
+  for (const [blockId, cells] of previewBlockCells) {
+    previewCellSets.set(blockId, cellSetFromCells(cells));
+  }
   ctx.save();
   for (let x = 0; x < WIDTH; x++) {
     const cell = nextRow[x] ?? makeCell(COLOR_BACKGROUND);
     const isBlockCell = !isEmptyCell(cell) && cell.blockId !== null;
     const previewPosition = { x, y: HEIGHT };
     const margins = isBlockCell
-      ? computeMarginsForCellInSet(previewPosition, previewCellSet)
+      ? computeMarginsForCellInSet(previewPosition, previewCellSets.get(cell.blockId))
       : defaultCellMargins();
     const rect = computeDrawRect(previewPosition.x, previewPosition.y, margins);
     ctx.fillStyle = isBlockCell ? cell.color : COLOR_BACKGROUND;
