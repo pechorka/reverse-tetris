@@ -22,10 +22,119 @@ const BORDER_COLORS_BY_LENGTH = {
 };
 const FALL_ANIMATION_PER_ROW = 120; // ms per row drop
 const MIN_FALL_DURATION = 120;
-game.width = WIDTH * CELL_SIZE; 
+game.width = WIDTH * CELL_SIZE;
 game.height = (HEIGHT + PREVIEW_ROWS) * CELL_SIZE;
 
 const idx = (x, y) => y * WIDTH + x;
+
+const DEFAULT_OVERLAY_LIGHT = "rgba(255, 255, 255, 0.45)";
+const DEFAULT_OVERLAY_DARK = "rgba(0, 0, 0, 0.4)";
+
+const LENGTH_OVERLAY_DRAWERS = {
+  1(ctx, size, colors) {
+    const radius = size / 6;
+    const positions = [
+      [size * 0.3, size * 0.3],
+      [size * 0.7, size * 0.45],
+      [size * 0.45, size * 0.72],
+    ];
+    ctx.fillStyle = colors.lightColor;
+    for (const [x, y] of positions) {
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const innerRadius = radius * 0.55;
+    ctx.fillStyle = colors.darkColor;
+    for (const [x, y] of positions) {
+      ctx.beginPath();
+      ctx.arc(x, y, innerRadius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  },
+  2(ctx, size, colors) {
+    const stripeCount = 3;
+    const spacing = size / (stripeCount + 1);
+    const lineWidth = Math.max(2, size / 10);
+    ctx.lineCap = "round";
+    ctx.lineWidth = lineWidth;
+    ctx.strokeStyle = colors.lightColor;
+    for (let i = 1; i <= stripeCount; i++) {
+      const y = i * spacing;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(size, y);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = colors.darkColor;
+    for (let i = 1; i < stripeCount; i++) {
+      const y = i * spacing + spacing / 2;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(size, y);
+      ctx.stroke();
+    }
+  },
+  3(ctx, size, colors) {
+    const stripeCount = 3;
+    const spacing = size / (stripeCount + 1);
+    const lineWidth = Math.max(2, size / 10);
+    ctx.lineCap = "round";
+    ctx.lineWidth = lineWidth;
+    ctx.strokeStyle = colors.lightColor;
+    for (let i = 1; i <= stripeCount; i++) {
+      const x = i * spacing;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, size);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = colors.darkColor;
+    for (let i = 1; i < stripeCount; i++) {
+      const x = i * spacing + spacing / 2;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, size);
+      ctx.stroke();
+    }
+  },
+  4(ctx, size, colors) {
+    const spacing = size / 3;
+    const lineWidth = Math.max(1.5, size / 14);
+    ctx.lineCap = "round";
+    ctx.lineWidth = lineWidth;
+    ctx.strokeStyle = colors.lightColor;
+    for (let offset = -size; offset <= size; offset += spacing) {
+      ctx.beginPath();
+      ctx.moveTo(offset, 0);
+      ctx.lineTo(offset + size, size);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = colors.darkColor;
+    for (let offset = 0; offset <= size * 2; offset += spacing) {
+      ctx.beginPath();
+      ctx.moveTo(offset, 0);
+      ctx.lineTo(offset - size, size);
+      ctx.stroke();
+    }
+  },
+};
+
+function drawLengthOverlay(ctx, length, drawX, drawY, size, options = {}) {
+  if (!length || size <= 0) return;
+  const drawer = LENGTH_OVERLAY_DRAWERS[length];
+  if (!drawer) return;
+  const {
+    lightColor = DEFAULT_OVERLAY_LIGHT,
+    darkColor = DEFAULT_OVERLAY_DARK,
+    alpha = 1,
+  } = options;
+  ctx.save();
+  ctx.translate(drawX, drawY);
+  ctx.globalAlpha *= alpha;
+  drawer(ctx, size, { lightColor, darkColor });
+  ctx.restore();
+}
 
 function makeCell(color, blockId = null) {
   return { color, blockId };
@@ -541,7 +650,13 @@ function render(timestamp = performance.now()) {
         animatingBlockIds && cell.blockId !== null && animatingBlockIds.has(cell.blockId);
       if (!isAnimatingCell) {
         ctx.fillStyle = cell.color;
-        if (innerSize > 0) ctx.fillRect(drawX, drawY, innerSize, innerSize);
+        if (innerSize > 0) {
+          ctx.fillRect(drawX, drawY, innerSize, innerSize);
+          const blockLength = blockLengths.get(cell.blockId);
+          if (blockLength >= 1 && blockLength <= 4) {
+            drawLengthOverlay(ctx, blockLength, drawX, drawY, innerSize);
+          }
+        }
       } else if (innerSize > 0) {
         ctx.fillStyle = COLOR_BACKGROUND;
         ctx.fillRect(drawX, drawY, innerSize, innerSize);
@@ -563,16 +678,22 @@ function render(timestamp = performance.now()) {
     }
   }
   if (selectedBlock) {
+    const selectedLength = selectedBlock.baseCells.length;
     const ghostDropDistance = computeDropDistance(selectedBlock.cells);
-    const length = selectedBlock.baseCells.length;
-    const ghostBorderColor = borderColorForLength(length);
+    const ghostBorderColor = borderColorForLength(selectedLength);
     ctx.save();
     ctx.globalAlpha = GHOST_FILL_ALPHA;
     ctx.fillStyle = selectedBlock.color;
     for (const cell of selectedBlock.cells) {
       const drawX = cell.x * CELL_SIZE + CELL_MARGIN;
       const drawY = (cell.y + ghostDropDistance) * CELL_SIZE + CELL_MARGIN;
-      if (innerSize > 0) ctx.fillRect(drawX, drawY, innerSize, innerSize);
+      if (innerSize > 0) {
+        ctx.fillRect(drawX, drawY, innerSize, innerSize);
+        drawLengthOverlay(ctx, selectedLength, drawX, drawY, innerSize, {
+          lightColor: "rgba(255, 255, 255, 0.7)",
+          darkColor: "rgba(0, 0, 0, 0.65)",
+        });
+      }
     }
     ctx.restore();
     ctx.save();
@@ -586,13 +707,17 @@ function render(timestamp = performance.now()) {
       if (innerSize > 0) ctx.strokeRect(drawX, drawY, innerSize, innerSize);
     }
     ctx.restore();
-  }
-  if (selectedBlock) {
     for (const cell of selectedBlock.cells) {
       const drawX = cell.x * CELL_SIZE + CELL_MARGIN;
       const drawY = cell.y * CELL_SIZE + CELL_MARGIN;
       ctx.fillStyle = selectedBlock.color;
-      if (innerSize > 0) ctx.fillRect(drawX, drawY, innerSize, innerSize);
+      if (innerSize > 0) {
+        ctx.fillRect(drawX, drawY, innerSize, innerSize);
+        drawLengthOverlay(ctx, selectedLength, drawX, drawY, innerSize, {
+          lightColor: "rgba(255, 255, 255, 0.5)",
+          darkColor: "rgba(0, 0, 0, 0.45)",
+        });
+      }
       ctx.save();
       ctx.strokeStyle = BORDER_SELECTED;
       ctx.lineWidth = 2;
@@ -619,7 +744,18 @@ function render(timestamp = performance.now()) {
       ctx.fillStyle = cell.color;
       ctx.globalAlpha = 0.45;
     }
-    if (innerSize > 0) ctx.fillRect(drawX, drawY, innerSize, innerSize);
+    if (innerSize > 0) {
+      ctx.fillRect(drawX, drawY, innerSize, innerSize);
+      if (!isEmptyCell(cell)) {
+        const previewLength = previewLengths.get(cell.blockId);
+        if (previewLength >= 1 && previewLength <= 4) {
+          drawLengthOverlay(ctx, previewLength, drawX, drawY, innerSize, {
+            lightColor: "rgba(255, 255, 255, 0.65)",
+            darkColor: "rgba(0, 0, 0, 0.55)",
+          });
+        }
+      }
+    }
     ctx.globalAlpha = 1;
     const borderColor = isEmptyCell(cell)
       ? BORDER_DEFAULT
@@ -660,7 +796,13 @@ function render(timestamp = performance.now()) {
         const currentY = cell.y + progress * move.dropDistance;
         const drawX = cell.x * CELL_SIZE + CELL_MARGIN;
         const drawY = currentY * CELL_SIZE + CELL_MARGIN;
-        if (innerSize > 0) ctx.fillRect(drawX, drawY, innerSize, innerSize);
+        if (innerSize > 0) {
+          ctx.fillRect(drawX, drawY, innerSize, innerSize);
+          const moveLength = move.cells.length;
+          if (moveLength >= 1 && moveLength <= 4) {
+            drawLengthOverlay(ctx, moveLength, drawX, drawY, innerSize);
+          }
+        }
         if (innerSize > 0) ctx.strokeRect(drawX, drawY, innerSize, innerSize);
       }
     }
