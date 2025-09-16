@@ -3,22 +3,25 @@ if (!game) throw new Error("no canvas");
 const ctx  = /** @type {CanvasRenderingContext2D} */(game.getContext("2d"));
 
 const WIDTH = 10, HEIGHT = 20, CELL_SIZE = 35;
-const COLOR_BACKGROUND = "black";
+const COLOR_BACKGROUND = "#1b1f32";
 const MAX_BLOCK_SPAWN = 7;
-const BORDER_DEFAULT = "#3a3a3a";
-const BORDER_HOVER = "#f5d742";
-const BORDER_SELECTED = "#5de6ff";
+const BORDER_DEFAULT = "#273244";
+const BORDER_HOVER = "#f0c987";
+const BORDER_SELECTED = "#7bdff2";
 const PREVIEW_ROWS = 1;
 const CELL_MARGIN = 4;
-const CELL_GAP_COLOR = "#aa0000";
-const GHOST_FILL_ALPHA = 0.28;
-const GHOST_BORDER_ALPHA = 0.75;
+const CELL_GAP_COLOR = "#161b26";
+const GHOST_FILL_ALPHA = 0.2;
+const GHOST_BORDER_ALPHA = 0.65;
+const TEXT_COLOR = "#e2e8f0";
+const LABEL_COLOR = "#cbd5f5";
+const BLOCK_COLORS = ["#8ab6f9", "#f5b0e3", "#9fd8c0", "#f8d89e"];
 const BORDER_COLORS_BY_LENGTH = {
-  1: "#f94144",
-  2: "#f8961e",
-  3: "#43aa8b",
-  4: "#577590",
-  default: "#d9d9d9",
+  1: "#f0c987",
+  2: "#7ec4cf",
+  3: "#9f87af",
+  4: "#6c8ebf",
+  default: "#cbd5f5",
 };
 const FALL_ANIMATION_PER_ROW = 120; // ms per row drop
 const MIN_FALL_DURATION = 120;
@@ -45,7 +48,7 @@ function borderColorForLength(length) {
 }
 
 const grid = Array.from({ length: WIDTH * HEIGHT }, () => makeCell(COLOR_BACKGROUND));
-const colors = ["green", "white", "blue", COLOR_BACKGROUND];
+const colors = [...BLOCK_COLORS, COLOR_BACKGROUND];
 
 let topLine = -1;
 let selectedBlock = null;
@@ -633,7 +636,7 @@ function render(timestamp = performance.now()) {
   }
   ctx.restore();
   ctx.save();
-  ctx.fillStyle = "white";
+  ctx.fillStyle = LABEL_COLOR;
   ctx.font = "16px sans-serif";
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
@@ -673,7 +676,7 @@ function render(timestamp = performance.now()) {
     }
   }
   ctx.save();
-  ctx.fillStyle = "white";
+  ctx.fillStyle = TEXT_COLOR;
   ctx.font = "20px sans-serif";
   ctx.textAlign = "right";
   ctx.textBaseline = "top";
