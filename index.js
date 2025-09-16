@@ -11,6 +11,8 @@ const BORDER_SELECTED = "#5de6ff";
 const PREVIEW_ROWS = 1;
 const CELL_MARGIN = 4;
 const CELL_GAP_COLOR = "#aa0000";
+const GHOST_FILL_ALPHA = 0.28;
+const GHOST_BORDER_ALPHA = 0.75;
 const BORDER_COLORS_BY_LENGTH = {
   1: "#f94144",
   2: "#f8961e",
@@ -352,15 +354,7 @@ function startFallAnimation(cells, color, blockId, dropDistance, shouldSpawn) {
 function dropSelectedBlock() {
   if (!selectedBlock) return null;
   const { cells, color, blockId } = selectedBlock;
-  let dropDistance = 0;
-  outer: while (true) {
-    for (const cell of cells) {
-      const targetY = cell.y + dropDistance + 1;
-      if (targetY >= HEIGHT) break outer;
-      if (!isEmptyCell(grid[idx(cell.x, targetY)])) break outer;
-    }
-    dropDistance++;
-  }
+  const dropDistance = computeDropDistance(cells);
 
   const placement = {
     cells: cells.map((cell) => ({ ...cell })),
@@ -372,6 +366,19 @@ function dropSelectedBlock() {
 
   selectedBlock = null;
   return placement;
+}
+
+function computeDropDistance(cells) {
+  let dropDistance = 0;
+  outer: while (true) {
+    for (const cell of cells) {
+      const targetY = cell.y + dropDistance + 1;
+      if (targetY >= HEIGHT) break outer;
+      if (!isEmptyCell(grid[idx(cell.x, targetY)])) break outer;
+    }
+    dropDistance++;
+  }
+  return dropDistance;
 }
 
 game.addEventListener("mousedown", trySelectBlock);
@@ -431,6 +438,31 @@ function render(timestamp = performance.now()) {
       ctx.strokeStyle = BORDER_DEFAULT;
       ctx.strokeRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
     }
+  }
+  if (selectedBlock) {
+    const ghostDropDistance = computeDropDistance(selectedBlock.cells);
+    const length = selectedBlock.baseCells.length;
+    const ghostBorderColor = borderColorForLength(length);
+    ctx.save();
+    ctx.globalAlpha = GHOST_FILL_ALPHA;
+    ctx.fillStyle = selectedBlock.color;
+    for (const cell of selectedBlock.cells) {
+      const drawX = cell.x * CELL_SIZE + CELL_MARGIN;
+      const drawY = (cell.y + ghostDropDistance) * CELL_SIZE + CELL_MARGIN;
+      if (innerSize > 0) ctx.fillRect(drawX, drawY, innerSize, innerSize);
+    }
+    ctx.restore();
+    ctx.save();
+    ctx.globalAlpha = GHOST_BORDER_ALPHA;
+    ctx.strokeStyle = ghostBorderColor;
+    ctx.setLineDash([6, 4]);
+    ctx.lineWidth = 2;
+    for (const cell of selectedBlock.cells) {
+      const drawX = cell.x * CELL_SIZE + CELL_MARGIN;
+      const drawY = (cell.y + ghostDropDistance) * CELL_SIZE + CELL_MARGIN;
+      if (innerSize > 0) ctx.strokeRect(drawX, drawY, innerSize, innerSize);
+    }
+    ctx.restore();
   }
   if (selectedBlock) {
     for (const cell of selectedBlock.cells) {
