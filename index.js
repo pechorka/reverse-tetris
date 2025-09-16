@@ -98,9 +98,55 @@ function generateNextRow() {
   return row;
 }
 
-function spawnBlocks() {
+function cloneGridCells(sourceGrid) {
+  return sourceGrid.map((cell) => copyCell(cell));
+}
+
+function restoreGridFromSnapshot(snapshotGrid) {
+  for (let i = 0; i < grid.length; i++) {
+    grid[i] = copyCell(snapshotGrid[i]);
+  }
+}
+
+function rowWouldClearLines(row) {
+  if (!row) return false;
+  const snapshot = {
+    grid: cloneGridCells(grid),
+    topLine,
+    score,
+    hoveredBlock,
+    selectedBlock,
+    fallingAnimation,
+  };
+  hoveredBlock = null;
+  selectedBlock = null;
+  fallingAnimation = null;
   moveBlocksUp();
+  const y = HEIGHT - 1;
+  for (let x = 0; x < WIDTH; x++) {
+    grid[idx(x, y)] = copyCell(row[x]);
+  }
+  const cleared = settleBoard();
+  restoreGridFromSnapshot(snapshot.grid);
+  topLine = snapshot.topLine;
+  score = snapshot.score;
+  hoveredBlock = snapshot.hoveredBlock;
+  selectedBlock = snapshot.selectedBlock;
+  fallingAnimation = snapshot.fallingAnimation;
+  return cleared > 0;
+}
+
+function spawnBlocks() {
   if (!nextRow) nextRow = generateNextRow();
+  let attempts = 0;
+  while (rowWouldClearLines(nextRow) && attempts < 20) {
+    nextRow = generateNextRow();
+    attempts++;
+  }
+  if (attempts >= 20) {
+    nextRow = Array.from({ length: WIDTH }, () => makeCell(COLOR_BACKGROUND));
+  }
+  moveBlocksUp();
   const y = HEIGHT - 1;
   for (let x = 0; x < WIDTH; x++) {
     grid[idx(x, y)] = copyCell(nextRow[x]);
