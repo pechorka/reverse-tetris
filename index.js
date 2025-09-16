@@ -126,7 +126,7 @@ function rowWouldClearLines(row) {
   for (let x = 0; x < WIDTH; x++) {
     grid[idx(x, y)] = copyCell(row[x]);
   }
-  const cleared = settleBoard();
+  const cleared = settleBoard({ animate: false });
   restoreGridFromSnapshot(snapshot.grid);
   topLine = snapshot.topLine;
   score = snapshot.score;
@@ -299,8 +299,13 @@ function clearHover() {
   hoveredBlock = null;
 }
 
-function applyGravity() {
-  if (selectedBlock || fallingAnimation) return;
+function applyGravity(options = {}) {
+  const { collectMoves = false } = options;
+  if (selectedBlock || fallingAnimation) {
+    return { moved: false, moves: [] };
+  }
+  const moves = collectMoves ? [] : null;
+  let movedAny = false;
   let moved;
   do {
     moved = false;
@@ -336,10 +341,21 @@ function applyGravity() {
           const newY = blockCell.y + dropDistance;
           grid[idx(blockCell.x, newY)] = makeCell(color, blockId);
         }
+        if (collectMoves) {
+          moves.push({
+            cells: cells.map((blockCell) => ({ ...blockCell })),
+            color,
+            blockId,
+            dropDistance,
+          });
+        }
         moved = true;
+        movedAny = true;
       }
     }
   } while (moved);
+
+  return { moved: movedAny, moves: moves || [] };
 }
 
 function clearFullLines() {
@@ -362,16 +378,44 @@ function clearFullLines() {
   return cleared;
 }
 
-function settleBoard() {
-  let totalCleared = 0;
-  while (true) {
-    applyGravity();
-    const cleared = clearFullLines();
-    if (!cleared) break;
-    totalCleared += cleared;
+function settleBoard(options = {}) {
+  const { animate = true, onComplete = null } = options;
+  if (!animate) {
+    let totalCleared = 0;
+    while (true) {
+      applyGravity();
+      const cleared = clearFullLines();
+      if (!cleared) break;
+      totalCleared += cleared;
+    }
+    if (totalCleared) score += totalCleared;
+    return totalCleared;
   }
-  if (totalCleared) score += totalCleared;
-  return totalCleared;
+
+  if (fallingAnimation) {
+    const continuation = () => settleBoard({ animate: true, onComplete });
+    fallingAnimation.after.push(continuation);
+    return 0;
+  }
+
+  const gravityResult = applyGravity({ collectMoves: true });
+  if (gravityResult.moves.length > 0) {
+    hoveredBlock = null;
+    startFallAnimation(gravityResult.moves, {
+      strokeStyle: null,
+      after: () => settleBoard({ animate: true, onComplete }),
+    });
+    return 0;
+  }
+
+  const cleared = clearFullLines();
+  if (cleared > 0) {
+    score += cleared;
+    return settleBoard({ animate: true, onComplete });
+  }
+
+  if (onComplete) onComplete();
+  return 0;
 }
 
 function finalizePlacement(cells, color, blockId, dropDistance, shouldSpawn) {
@@ -379,19 +423,31 @@ function finalizePlacement(cells, color, blockId, dropDistance, shouldSpawn) {
     const finalY = cell.y + dropDistance;
     grid[idx(cell.x, finalY)] = makeCell(color, blockId);
   }
-  settleBoard();
-  if (shouldSpawn) spawnBlocks();
+  settleBoard({
+    onComplete: () => {
+      if (shouldSpawn) spawnBlocks();
+    },
+  });
   selectionMoved = false;
 }
 
-function startFallAnimation(cells, color, blockId, dropDistance, shouldSpawn) {
-  const duration = Math.max(MIN_FALL_DURATION, dropDistance * FALL_ANIMATION_PER_ROW);
+function startFallAnimation(moves, options = {}) {
+  if (!moves || moves.length === 0) return;
+  const clonedMoves = moves.map((move) => ({
+    cells: move.cells.map((cell) => ({ ...cell })),
+    color: move.color,
+    blockId: move.blockId,
+    dropDistance: move.dropDistance,
+  }));
+  const maxDrop = clonedMoves.reduce((max, move) => Math.max(max, move.dropDistance), 0);
+  const duration = Math.max(MIN_FALL_DURATION, maxDrop * FALL_ANIMATION_PER_ROW);
   fallingAnimation = {
-    cells: cells.map((cell) => ({ ...cell })),
-    color,
-    blockId,
-    dropDistance,
-    shouldSpawn,
+    moves: clonedMoves,
+    finalize: options.finalize || null,
+    after: options.after ? [options.after] : [],
+    strokeStyle: Object.prototype.hasOwnProperty.call(options, "strokeStyle")
+      ? options.strokeStyle
+      : BORDER_SELECTED,
     startTime: null,
     duration,
   };
@@ -439,7 +495,12 @@ window.addEventListener("mouseup", (evt) => {
   if (dropDistance === 0) {
     finalizePlacement(cells, color, blockId, dropDistance, shouldSpawn);
   } else {
-    startFallAnimation(cells, color, blockId, dropDistance, shouldSpawn);
+    startFallAnimation([
+      { cells, color, blockId, dropDistance },
+    ], {
+      finalize: () => finalizePlacement(cells, color, blockId, dropDistance, shouldSpawn),
+      strokeStyle: BORDER_SELECTED,
+    });
   }
   clearHover();
   evt.preventDefault();
@@ -461,20 +522,34 @@ function render(timestamp = performance.now()) {
       blockLengths.set(cell.blockId, (blockLengths.get(cell.blockId) || 0) + 1);
     }
   }
+  const animatingBlockIds = fallingAnimation
+    ? new Set(
+        fallingAnimation.moves
+          .map((move) => move.blockId)
+          .filter((blockId) => blockId !== null && blockId !== undefined)
+      )
+    : null;
   const innerSize = Math.max(0, CELL_SIZE - CELL_MARGIN * 2);
   for (let y = 0; y < HEIGHT; y++) {
     for (let x = 0; x < WIDTH; x++) {
       const cell = grid[idx(x, y)];
       const drawX = x * CELL_SIZE + CELL_MARGIN;
       const drawY = y * CELL_SIZE + CELL_MARGIN;
-      ctx.fillStyle = cell.color;
-      if (innerSize > 0) ctx.fillRect(drawX, drawY, innerSize, innerSize);
+      const isAnimatingCell =
+        animatingBlockIds && cell.blockId !== null && animatingBlockIds.has(cell.blockId);
+      if (!isAnimatingCell) {
+        ctx.fillStyle = cell.color;
+        if (innerSize > 0) ctx.fillRect(drawX, drawY, innerSize, innerSize);
+      } else if (innerSize > 0) {
+        ctx.fillStyle = COLOR_BACKGROUND;
+        ctx.fillRect(drawX, drawY, innerSize, innerSize);
+      }
       const key = cellKey(x, y);
       const baseBorder = isEmptyCell(cell)
         ? BORDER_DEFAULT
         : borderColorForLength(blockLengths.get(cell.blockId));
       const strokeColor = hoveredCells.has(key) ? BORDER_HOVER : baseBorder;
-      if (innerSize > 0) {
+      if (innerSize > 0 && !isAnimatingCell) {
         ctx.save();
         ctx.strokeStyle = strokeColor;
         ctx.lineWidth = 2;
@@ -572,21 +647,30 @@ function render(timestamp = performance.now()) {
     const duration = anim.duration || MIN_FALL_DURATION;
     const progress = Math.min(1, duration ? elapsed / duration : 1);
     ctx.save();
-    ctx.fillStyle = anim.color;
-    ctx.strokeStyle = BORDER_SELECTED;
     ctx.lineWidth = 2;
-    for (const cell of anim.cells) {
-      const currentY = cell.y + progress * anim.dropDistance;
-      const drawX = cell.x * CELL_SIZE + CELL_MARGIN;
-      const drawY = currentY * CELL_SIZE + CELL_MARGIN;
-      if (innerSize > 0) ctx.fillRect(drawX, drawY, innerSize, innerSize);
-      if (innerSize > 0) ctx.strokeRect(drawX, drawY, innerSize, innerSize);
+    for (const move of anim.moves) {
+      const strokeColor = anim.strokeStyle == null
+        ? borderColorForLength(move.cells.length)
+        : anim.strokeStyle;
+      ctx.fillStyle = move.color;
+      ctx.strokeStyle = strokeColor;
+      for (const cell of move.cells) {
+        const currentY = cell.y + progress * move.dropDistance;
+        const drawX = cell.x * CELL_SIZE + CELL_MARGIN;
+        const drawY = currentY * CELL_SIZE + CELL_MARGIN;
+        if (innerSize > 0) ctx.fillRect(drawX, drawY, innerSize, innerSize);
+        if (innerSize > 0) ctx.strokeRect(drawX, drawY, innerSize, innerSize);
+      }
     }
     ctx.restore();
     if (progress >= 1) {
-      const { cells, color, blockId, dropDistance, shouldSpawn } = anim;
+      const completedAnimation = anim;
       fallingAnimation = null;
-      finalizePlacement(cells, color, blockId, dropDistance, shouldSpawn);
+      if (typeof completedAnimation.finalize === "function") {
+        completedAnimation.finalize(completedAnimation.moves);
+      }
+      const callbacks = completedAnimation.after.slice();
+      for (const cb of callbacks) cb();
     }
   }
   ctx.save();
