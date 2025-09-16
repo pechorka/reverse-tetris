@@ -136,7 +136,8 @@ function rowWouldClearLines(row) {
   return cleared > 0;
 }
 
-function spawnBlocks() {
+function spawnBlocks(options = {}) {
+  const { animateSettle = true } = options;
   if (!nextRow) nextRow = generateNextRow();
   let attempts = 0;
   while (rowWouldClearLines(nextRow) && attempts < 20) {
@@ -152,7 +153,7 @@ function spawnBlocks() {
     grid[idx(x, y)] = copyCell(nextRow[x]);
   }
 
-  settleBoard();
+  settleBoard({ animate: animateSettle });
   nextRow = generateNextRow();
 }
 
@@ -389,6 +390,7 @@ function settleBoard(options = {}) {
       totalCleared += cleared;
     }
     if (totalCleared) score += totalCleared;
+    if (onComplete) onComplete();
     return totalCleared;
   }
 
@@ -683,9 +685,7 @@ function render(timestamp = performance.now()) {
   requestAnimationFrame(render);
 }
 
-spawnBlocks();
-spawnBlocks();
-spawnBlocks();
-spawnBlocks();
-spawnBlocks();
+for (let i = 0; i < 5; i++) {
+  spawnBlocks({ animateSettle: false });
+}
 render();
