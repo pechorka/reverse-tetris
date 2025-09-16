@@ -204,6 +204,33 @@ function computeDrawRect(cellX, cellY, margins) {
   };
 }
 
+function strokeRectWithMargins(context, rect, margins) {
+  if (!rect || rect.width <= 0 || rect.height <= 0) return;
+  let hasSegments = false;
+  context.beginPath();
+  if (margins.top > 0) {
+    context.moveTo(rect.x, rect.y);
+    context.lineTo(rect.x + rect.width, rect.y);
+    hasSegments = true;
+  }
+  if (margins.right > 0) {
+    context.moveTo(rect.x + rect.width, rect.y);
+    context.lineTo(rect.x + rect.width, rect.y + rect.height);
+    hasSegments = true;
+  }
+  if (margins.bottom > 0) {
+    context.moveTo(rect.x + rect.width, rect.y + rect.height);
+    context.lineTo(rect.x, rect.y + rect.height);
+    hasSegments = true;
+  }
+  if (margins.left > 0) {
+    context.moveTo(rect.x, rect.y + rect.height);
+    context.lineTo(rect.x, rect.y);
+    hasSegments = true;
+  }
+  if (hasSegments) context.stroke();
+}
+
 function cellSetFromCells(cells, offset = { x: 0, y: 0 }) {
   const set = new Set();
   if (!cells) return set;
@@ -619,11 +646,13 @@ function render(timestamp = performance.now()) {
         ctx.save();
         ctx.strokeStyle = strokeColor;
         ctx.lineWidth = 2;
-        ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+        strokeRectWithMargins(ctx, rect, margins);
         ctx.restore();
       }
-      ctx.strokeStyle = BORDER_DEFAULT;
-      ctx.strokeRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+      if (isEmptyCell(cell)) {
+        ctx.strokeStyle = BORDER_DEFAULT;
+        ctx.strokeRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+      }
     }
   }
   if (selectedBlock) {
@@ -654,9 +683,7 @@ function render(timestamp = performance.now()) {
     for (const cell of ghostCells) {
       const margins = computeMarginsForCellInSet(cell, ghostCellSet);
       const rect = computeDrawRect(cell.x, cell.y, margins);
-      if (rect.width > 0 && rect.height > 0) {
-        ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
-      }
+      strokeRectWithMargins(ctx, rect, margins);
     }
     ctx.restore();
     const selectedCellSet = cellSetFromCells(selectedBlock.cells);
@@ -670,9 +697,7 @@ function render(timestamp = performance.now()) {
       ctx.save();
       ctx.strokeStyle = BORDER_SELECTED;
       ctx.lineWidth = 2;
-      if (rect.width > 0 && rect.height > 0) {
-        ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
-      }
+      strokeRectWithMargins(ctx, rect, margins);
       ctx.restore();
     }
   }
@@ -712,11 +737,13 @@ function render(timestamp = performance.now()) {
       ctx.save();
       ctx.strokeStyle = borderColor;
       ctx.lineWidth = 2;
-      ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+      strokeRectWithMargins(ctx, rect, margins);
       ctx.restore();
     }
-    ctx.strokeStyle = BORDER_DEFAULT;
-    ctx.strokeRect(x * CELL_SIZE, previewY, CELL_SIZE, CELL_SIZE);
+    if (!isBlockCell) {
+      ctx.strokeStyle = BORDER_DEFAULT;
+      ctx.strokeRect(x * CELL_SIZE, previewY, CELL_SIZE, CELL_SIZE);
+    }
   }
   ctx.restore();
   ctx.save();
@@ -747,7 +774,7 @@ function render(timestamp = performance.now()) {
         const rect = computeDrawRect(cell.x, currentY, margins);
         if (rect.width > 0 && rect.height > 0) {
           ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
-          ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+          strokeRectWithMargins(ctx, rect, margins);
         }
       }
     }
