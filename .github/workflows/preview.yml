@@ -17,29 +17,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare build directory
-        if: github.event.action != 'closed'
-        run: |
-          mkdir -p build
-          rsync -av --delete \
-            --exclude '.git/' \
-            --exclude '.github/' \
-            --exclude 'build/' \
-            ./ build/
-
-      - name: Deploy preview
-        if: github.event.action != 'closed'
+      - name: Deploy or remove preview
         uses: rossjrw/pr-preview-action@v1
         with:
-          source-dir: ./build/
-
-      - name: Prepare directory for cleanup
-        if: github.event.action == 'closed'
-        run: mkdir -p build
-
-      - name: Remove preview
-        if: github.event.action == 'closed'
-        uses: rossjrw/pr-preview-action@v1
-        with:
-          source-dir: ./build/
-          delete: true
+          source-dir: ./
+          delete: ${{ github.event.action == 'closed' }}
