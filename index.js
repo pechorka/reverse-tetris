@@ -26,6 +26,16 @@ const BORDER_COLORS_BY_LENGTH = {
 const FALL_ANIMATION_PER_ROW = 120; // ms per row drop
 const MIN_FALL_DURATION = 120;
 const LINE_CLEAR_DURATION = 200;
+const POINT_POPUP_DURATION = 200;
+const POINT_POPUP_RISE = CELL_SIZE * 0.3;
+const POINT_POPUP_COLOR = "#f0c987";
+const HUD_PADDING = 12;
+const HUD_LINE_HEIGHT = 24;
+const PROGRESS_BAR_WIDTH = 200;
+const PROGRESS_BAR_HEIGHT = 12;
+const PROGRESS_BAR_MARGIN_TOP = 8;
+const PROGRESS_BAR_BG = BORDER_DEFAULT;
+const PROGRESS_BAR_FILL = BORDER_SELECTED;
 game.width = WIDTH * CELL_SIZE; 
 game.height = (HEIGHT + PREVIEW_ROWS) * CELL_SIZE;
 
@@ -54,7 +64,12 @@ const colors = [...BLOCK_COLORS, COLOR_BACKGROUND];
 let topLine = -1;
 let selectedBlock = null;
 let hoveredBlock = null;
-let score = 0;
+let points = 0;
+let totalRowsCleared = 0;
+let level = 1;
+let pointsIntoLevel = 0;
+let pointsToNextLevel = pointsRequiredForLevel(level);
+const pointPopups = [];
 let nextRow = null;
 let fallingAnimation = null;
 let lineClearAnimation = null;
@@ -117,7 +132,11 @@ function rowWouldClearLines(row) {
   const snapshot = {
     grid: cloneGridCells(grid),
     topLine,
-    score,
+    points,
+    totalRowsCleared,
+    level,
+    pointsIntoLevel,
+    pointsToNextLevel,
     hoveredBlock,
     selectedBlock,
     fallingAnimation,
@@ -130,10 +149,14 @@ function rowWouldClearLines(row) {
   for (let x = 0; x < WIDTH; x++) {
     grid[idx(x, y)] = copyCell(row[x]);
   }
-  const cleared = settleBoard({ animate: false });
+  const cleared = settleBoard({ animate: false, applyScoring: false });
   restoreGridFromSnapshot(snapshot.grid);
   topLine = snapshot.topLine;
-  score = snapshot.score;
+  points = snapshot.points;
+  totalRowsCleared = snapshot.totalRowsCleared;
+  level = snapshot.level;
+  pointsIntoLevel = snapshot.pointsIntoLevel;
+  pointsToNextLevel = snapshot.pointsToNextLevel;
   hoveredBlock = snapshot.hoveredBlock;
   selectedBlock = snapshot.selectedBlock;
   fallingAnimation = snapshot.fallingAnimation;
@@ -157,7 +180,7 @@ function spawnBlocks(options = {}) {
     grid[idx(x, y)] = copyCell(nextRow[x]);
   }
 
-  settleBoard({ animate: animateSettle });
+  settleBoard({ animate: animateSettle, applyScoring: animateSettle });
   nextRow = generateNextRow();
 }
 
@@ -475,8 +498,86 @@ function clearLines(rows) {
   }
 }
 
+function pointsRequiredForLevel(currentLevel) {
+  const tilesPerRow = WIDTH;
+  const scaled = tilesPerRow * currentLevel;
+  const required = scaled * (scaled - 1);
+  return Math.max(1, required);
+}
+
+function addPoints(amount) {
+  if (!Number.isFinite(amount) || amount <= 0) return;
+  points += amount;
+  pointsIntoLevel += amount;
+  while (pointsIntoLevel >= pointsToNextLevel) {
+    pointsIntoLevel -= pointsToNextLevel;
+    level += 1;
+    pointsToNextLevel = pointsRequiredForLevel(level);
+  }
+}
+
+function calculateLineClearScore(rows, scoringLevel = level) {
+  if (!rows || rows.length === 0) {
+    return { totalPoints: 0, tiles: [] };
+  }
+  const rowSet = new Set(rows);
+  const processedBlocks = new Set();
+  const multiplier = rows.length;
+  let totalPointsAwarded = 0;
+  const tileScores = [];
+  for (const y of rows) {
+    for (let x = 0; x < WIDTH; x++) {
+      const cell = grid[idx(x, y)];
+      if (!cell || isEmptyCell(cell)) continue;
+      const blockId = cell.blockId;
+      if (blockId === null || processedBlocks.has(blockId)) continue;
+      processedBlocks.add(blockId);
+      const blockCells = collectBlockCells(x, y, blockId);
+      if (!blockCells.length) continue;
+      const clearedCells = blockCells.filter((blockCell) => rowSet.has(blockCell.y));
+      if (!clearedCells.length) continue;
+      const tileCount = clearedCells.length;
+      const blockPoints = scoringLevel * tileCount * multiplier;
+      totalPointsAwarded += blockPoints;
+      for (const clearedCell of clearedCells) {
+        tileScores.push({ x: clearedCell.x, y: clearedCell.y, points: blockPoints });
+      }
+    }
+  }
+  return { totalPoints: totalPointsAwarded, tiles: tileScores };
+}
+
+function queuePointPopups(tiles) {
+  if (!tiles || tiles.length === 0) return;
+  for (const tile of tiles) {
+    pointPopups.push({
+      x: tile.x,
+      y: tile.y,
+      value: tile.points,
+      startTime: null,
+      duration: POINT_POPUP_DURATION,
+    });
+  }
+}
+
+function applyLineClearRewards(rows, options = {}) {
+  if (!rows || rows.length === 0) {
+    return { totalPoints: 0, tiles: [] };
+  }
+  const { showPopups = true } = options;
+  const scoreResult = calculateLineClearScore(rows, level);
+  totalRowsCleared += rows.length;
+  if (scoreResult.totalPoints > 0) {
+    addPoints(scoreResult.totalPoints);
+    if (showPopups) {
+      queuePointPopups(scoreResult.tiles);
+    }
+  }
+  return scoreResult;
+}
+
 function settleBoard(options = {}) {
-  const { animate = true, onComplete = null } = options;
+  const { animate = true, onComplete = null, applyScoring = true } = options;
   if (!animate) {
     let totalCleared = 0;
     while (true) {
@@ -484,22 +585,24 @@ function settleBoard(options = {}) {
       const rows = collectFullLines();
       if (rows.length === 0) break;
       hoveredBlock = null;
+      if (applyScoring) {
+        applyLineClearRewards(rows, { showPopups: false });
+      }
       clearLines(rows);
       totalCleared += rows.length;
     }
-    if (totalCleared) score += totalCleared;
     if (onComplete) onComplete();
     return totalCleared;
   }
 
   if (fallingAnimation) {
-    const continuation = () => settleBoard({ animate: true, onComplete });
+    const continuation = () => settleBoard({ animate: true, onComplete, applyScoring });
     fallingAnimation.after.push(continuation);
     return 0;
   }
 
   if (lineClearAnimation) {
-    const continuation = () => settleBoard({ animate: true, onComplete });
+    const continuation = () => settleBoard({ animate: true, onComplete, applyScoring });
     if (!lineClearAnimation.after) lineClearAnimation.after = [];
     lineClearAnimation.after.push(continuation);
     return 0;
@@ -510,7 +613,7 @@ function settleBoard(options = {}) {
     hoveredBlock = null;
     startFallAnimation(gravityResult.moves, {
       strokeStyle: null,
-      after: () => settleBoard({ animate: true, onComplete }),
+      after: () => settleBoard({ animate: true, onComplete, applyScoring }),
     });
     return 0;
   }
@@ -518,10 +621,12 @@ function settleBoard(options = {}) {
   const rows = collectFullLines();
   if (rows.length > 0) {
     hoveredBlock = null;
-    score += rows.length;
+    if (applyScoring) {
+      applyLineClearRewards(rows);
+    }
     startLineClearAnimation(rows, {
       finalize: () => clearLines(rows),
-      after: () => settleBoard({ animate: true, onComplete }),
+      after: () => settleBoard({ animate: true, onComplete, applyScoring }),
     });
     return 0;
   }
@@ -633,6 +738,87 @@ window.addEventListener("mouseup", (evt) => {
   clearHover();
   evt.preventDefault();
 });
+
+function formatNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value) && value.toLocaleString) {
+    return value.toLocaleString();
+  }
+  return String(value);
+}
+
+function drawPointPopups(timestamp) {
+  if (pointPopups.length === 0) return;
+  const active = [];
+  ctx.save();
+  ctx.font = "18px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (const popup of pointPopups) {
+    if (popup.startTime === null) popup.startTime = timestamp;
+    const duration = popup.duration || POINT_POPUP_DURATION;
+    const elapsed = timestamp - popup.startTime;
+    if (duration && elapsed >= duration) {
+      continue;
+    }
+    const progress = duration ? Math.min(1, elapsed / duration) : 1;
+    const alpha = Math.max(0, 1 - progress);
+    const centerX = (popup.x + 0.5) * CELL_SIZE;
+    const centerY = (popup.y + 0.5) * CELL_SIZE - progress * POINT_POPUP_RISE;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = POINT_POPUP_COLOR;
+    ctx.fillText(formatNumber(popup.value), centerX, centerY);
+    ctx.restore();
+    active.push(popup);
+  }
+  ctx.restore();
+  pointPopups.length = 0;
+  Array.prototype.push.apply(pointPopups, active);
+}
+
+function drawHud() {
+  const right = game.width - HUD_PADDING;
+  const top = HUD_PADDING;
+  const lineHeight = HUD_LINE_HEIGHT;
+  ctx.save();
+  ctx.fillStyle = TEXT_COLOR;
+  ctx.font = "20px sans-serif";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "top";
+  ctx.fillText(`Level: ${formatNumber(level)}`, right, top);
+  ctx.fillText(`Points: ${formatNumber(points)}`, right, top + lineHeight);
+  ctx.fillText(`Rows: ${formatNumber(totalRowsCleared)}`, right, top + lineHeight * 2);
+  ctx.restore();
+
+  const barWidth = PROGRESS_BAR_WIDTH;
+  const barHeight = PROGRESS_BAR_HEIGHT;
+  const barX = game.width - HUD_PADDING - barWidth;
+  const barY = top + lineHeight * 3 + PROGRESS_BAR_MARGIN_TOP;
+  const progress = pointsToNextLevel > 0
+    ? Math.min(1, pointsIntoLevel / pointsToNextLevel)
+    : 1;
+
+  ctx.save();
+  ctx.fillStyle = PROGRESS_BAR_BG;
+  ctx.fillRect(barX, barY, barWidth, barHeight);
+  ctx.fillStyle = PROGRESS_BAR_FILL;
+  ctx.fillRect(barX, barY, barWidth * progress, barHeight);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = BORDER_DEFAULT;
+  ctx.strokeRect(barX, barY, barWidth, barHeight);
+  ctx.fillStyle = LABEL_COLOR;
+  ctx.font = "12px sans-serif";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "bottom";
+  ctx.fillText("Next level", barX + barWidth, barY - 4);
+  ctx.textBaseline = "top";
+  ctx.fillText(
+    `${formatNumber(pointsIntoLevel)} / ${formatNumber(pointsToNextLevel)}`,
+    barX + barWidth,
+    barY + barHeight + 4
+  );
+  ctx.restore();
+}
 
 function render(timestamp = performance.now()) {
   ctx.clearRect(0, 0, game.width, game.height);
@@ -858,13 +1044,8 @@ function render(timestamp = performance.now()) {
       for (const cb of callbacks) cb();
     }
   }
-  ctx.save();
-  ctx.fillStyle = TEXT_COLOR;
-  ctx.font = "20px sans-serif";
-  ctx.textAlign = "right";
-  ctx.textBaseline = "top";
-  ctx.fillText(`Score: ${score}`, game.width - 10, 10);
-  ctx.restore();
+  drawPointPopups(timestamp);
+  drawHud();
   if (activeLineClearAnimation && lineClearProgress >= 1) {
     const completedAnimation = activeLineClearAnimation;
     lineClearAnimation = null;
